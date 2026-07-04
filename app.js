@@ -1,131 +1,65 @@
-const HOME_CENTRE = [51.460834, -0.097488];
-const STORAGE_KEY = "se24-field-cards-v3";
-const GEOFENCE_METERS = 25;
-const MAX_LOCATION_ACCURACY_METERS = 40;
+const HOME = { lat: 51.460834, lon: -0.097488, label: "SE24 0AQ" };
+const STORAGE_KEY = "se24-field-cards-v4";
+const COLLECT_RADIUS_METERS = 5;
+const MAX_LOCATION_ACCURACY_METERS = 35;
 const MAX_LOCATION_AGE_MS = 120000;
-const rarityRank = {
-  Everyday: 1,
-  "Useful find": 2,
-  "Good find": 3,
-  "Prize find": 4,
-  Landmark: 5
-};
-const rarityColors = {
-  Everyday: "#66746f",
-  "Useful find": "#34785f",
-  "Good find": "#277981",
-  "Prize find": "#b57924",
-  Landmark: "#6b5d8d"
-};
-const familyGlyphs = {
-  canopy: "T",
-  memory: "M",
-  street: "S",
-  culture: "C",
-  movement: "W"
+const MAX_TARGETS = 5;
+const MIN_TARGETS = 3;
+
+const FAMILY_LABELS = {
+  canopy: "Tree",
+  memory: "History",
+  street: "Street",
+  culture: "Place",
+  movement: "Transport"
 };
 
 let objects = [];
-let selectedId = null;
 let activeView = "nearby";
-let activeFilter = "all";
-let mapMode = false;
+let selectedId = null;
 let collected = new Set(JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"));
 let currentPosition = null;
 let locationError = null;
-let userLocationLayer = null;
+let heading = 0;
+let headingEnabled = false;
 
-const map = L.map("map", {
-  zoomControl: false
-}).setView(HOME_CENTRE, 15);
-
-L.control.zoom({ position: "bottomleft" }).addTo(map);
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-  maxZoom: 19,
-  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-}).addTo(map);
-
-const markerLayer = L.layerGroup().addTo(map);
-L.circleMarker(HOME_CENTRE, {
-  radius: 8,
-  color: "#17211d",
-  fillColor: "#fffaf0",
-  fillOpacity: 1,
-  weight: 3
-}).bindTooltip("SE24 0AQ", { direction: "top" }).addTo(map);
-
-const content = document.querySelector("#content");
-const cardTemplate = document.querySelector("#cardTemplate");
+const targetCount = document.querySelector("#targetCount");
 const collectedCount = document.querySelector("#collectedCount");
-const collectionKinds = document.querySelector("#collectionKinds");
 const collectionValue = document.querySelector("#collectionValue");
-const mapStatus = document.querySelector("#mapStatus");
+const locationStatus = document.querySelector("#locationStatus");
+const headingStatus = document.querySelector("#headingStatus");
+const targetLayer = document.querySelector("#targetLayer");
+const signalList = document.querySelector("#signalList");
+const focusCard = document.querySelector("#focusCard");
+const collectedSummary = document.querySelector("#collectedSummary");
+const collectedList = document.querySelector("#collectedList");
+const setsList = document.querySelector("#setsList");
+const headingButton = document.querySelector("#headingButton");
+const targetTemplate = document.querySelector("#targetTemplate");
 
 fetch("data/se24-objects.json")
   .then((response) => response.json())
   .then((payload) => {
     objects = payload.objects.map(normaliseGameObject);
-    selectedId = objects[0]?.id || null;
+    selectedId = getVisibleTargets()[0]?.id || null;
     renderAll();
-    refreshMapSize();
     startLocationWatch();
   })
   .catch(() => {
-    content.innerHTML = '<div class="empty-state">Could not load the SE24 field data.</div>';
+    focusCard.innerHTML = '<div class="empty-card">Could not load the SE24 field data.</div>';
   });
 
 document.querySelectorAll(".tab").forEach((button) => {
   button.addEventListener("click", () => {
     activeView = button.dataset.view;
     document.querySelectorAll(".tab").forEach((tab) => tab.classList.toggle("active", tab === button));
-    renderContent();
-  });
-});
-
-document.querySelectorAll(".chip").forEach((button) => {
-  button.addEventListener("click", () => {
-    activeFilter = button.dataset.filter;
-    document.querySelectorAll(".chip").forEach((chip) => chip.classList.toggle("active", chip === button));
+    document.querySelectorAll(".view").forEach((view) => view.classList.toggle("active", view.id === `${activeView}View`));
+    document.querySelector("h1").textContent = button.textContent;
     renderAll();
   });
 });
 
-document.querySelector("#locateButton").addEventListener("click", () => {
-  map.setView(HOME_CENTRE, 17);
-  refreshMapSize();
-});
-
-document.querySelector("#questButton").addEventListener("click", () => {
-  const next = getNextHunt();
-  if (next) focusObject(next.id);
-});
-
-document.querySelector("#mapModeButton").addEventListener("click", () => {
-  mapMode = !mapMode;
-  document.querySelector(".shell").classList.toggle("map-mode", mapMode);
-  document.querySelector("#mapModeButton").textContent = mapMode ? "List" : "Map";
-  refreshMapSize();
-});
-
-map.on("locationfound", (event) => {
-  L.circleMarker(event.latlng, {
-    radius: 7,
-    color: "#17211d",
-    fillColor: "#fffaf0",
-    fillOpacity: 1,
-    weight: 3
-  }).addTo(map);
-});
-
-window.addEventListener("resize", () => {
-  refreshMapSize();
-});
-
-window.addEventListener("orientationchange", refreshMapSize);
-window.addEventListener("load", refreshMapSize);
-document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) refreshMapSize();
-});
+headingButton.addEventListener("click", requestHeading);
 
 function normaliseGameObject(object) {
   const game = object.game || {};
@@ -133,274 +67,347 @@ function normaliseGameObject(object) {
     ...object,
     game: {
       rarity: game.rarity || object.tier || "Everyday",
-      rarityRank: game.rarityRank || rarityRank[object.tier] || 1,
       value: game.value || object.totalScore || 1,
       kind: game.kind || object.typeLabel || object.type,
-      form: game.form || object.familyLabel,
-      why: game.why || object.cardText || "A real object at this exact spot.",
-      spot: game.spot || "Open the map, walk to the marker, and check the object against the name.",
-      hunt: game.hunt || object.escalationHint || "Find another item from the same category.",
+      form: game.form || object.familyLabel || FAMILY_LABELS[object.family] || "Object",
+      why: game.why || "A real object at this exact spot.",
       badges: game.badges || object.traits || []
     }
   };
 }
 
 function renderAll() {
-  renderMarkers();
-  renderStats();
-  renderContent();
-  renderMapStatus();
-  refreshMapSize();
+  const visibleTargets = getVisibleTargets();
+  if (!selectedId || !visibleTargets.some((object) => object.id === selectedId)) {
+    selectedId = visibleTargets[0]?.id || null;
+  }
+  renderStats(visibleTargets);
+  renderLocationStatus();
+  renderCompass(visibleTargets);
+  renderFocus(visibleTargets);
+  renderCollected();
+  renderSets();
 }
 
-function filteredObjects() {
-  const pool = activeFilter === "all" ? objects : objects.filter((object) => object.family === activeFilter);
-  return [...pool].sort((a, b) => {
-    if (collected.has(a.id) !== collected.has(b.id)) return collected.has(a.id) ? 1 : -1;
-    return proximityBand(a) - proximityBand(b) || homeDistance(a) - homeDistance(b) || b.game.value - a.game.value;
-  });
-}
-
-function renderMarkers() {
-  markerLayer.clearLayers();
-  filteredObjects().forEach((object) => {
-    const marker = L.marker([object.lat, object.lon], { icon: markerIcon(object) });
-    marker.bindTooltip(`${object.name} · ${object.game.rarity}`, { direction: "top" });
-    marker.bindPopup(markerPopup(object));
-    marker.on("click", () => selectObjectFromMap(object.id));
-    markerLayer.addLayer(marker);
-  });
-}
-
-function selectObjectFromMap(id) {
-  const object = objects.find((item) => item.id === id);
-  if (!object) return;
-  selectedId = id;
-  activeView = "nearby";
-  document.querySelectorAll(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.view === activeView));
-  renderStats();
-  renderContent();
-  renderMapStatus();
-  L.popup().setLatLng([object.lat, object.lon]).setContent(markerPopup(object)).openOn(map);
-}
-
-function markerPopup(object) {
-  return `
-    <strong>${escapeHtml(object.name)}</strong>
-    <span>${escapeHtml(object.game.kind)} · +${object.game.value}</span>
-    <small>${object.distanceFromHome}m from SE24 0AQ</small>
-  `;
-}
-
-function markerIcon(object) {
-  const color = rarityColors[object.game.rarity] || rarityColors.Everyday;
-  const collectedClass = collected.has(object.id) ? " marker-collected" : "";
-  return L.divIcon({
-    className: "",
-    iconSize: [28, 28],
-    iconAnchor: [14, 28],
-    html: `<div class="marker-pin${collectedClass}" style="background:${color}"><span>${familyGlyphs[object.family] || "?"}</span></div>`
-  });
-}
-
-function renderStats() {
+function renderStats(visibleTargets) {
   const found = objects.filter((object) => collected.has(object.id));
+  targetCount.textContent = visibleTargets.length;
   collectedCount.textContent = found.length;
-  collectionKinds.textContent = new Set(found.map((object) => object.game.kind)).size;
   collectionValue.textContent = found.reduce((sum, object) => sum + object.game.value, 0).toLocaleString();
 }
 
-function renderContent() {
-  content.innerHTML = "";
-  if (activeView === "sets") {
-    renderSets();
-    return;
+function renderLocationStatus() {
+  if (locationError) {
+    locationStatus.textContent = locationError.includes("HTTPS") ? "HTTPS needed" : "GPS unavailable";
+  } else if (!currentPosition) {
+    locationStatus.textContent = "Using SE24 start";
+  } else {
+    locationStatus.textContent = `GPS ${Math.round(currentPosition.accuracy)}m`;
   }
-  const pool = activeView === "collection"
-    ? filteredObjects().filter((object) => collected.has(object.id))
-    : visibleNearbyObjects();
-
-  if (!pool.length) {
-    content.innerHTML = '<div class="empty-state">Nothing logged yet. Pick a nearby item and log it.</div>';
-    return;
-  }
-  pool.forEach((object) => content.appendChild(renderCard(object)));
+  headingStatus.textContent = headingEnabled ? "Live compass" : "North-up";
 }
 
-function renderMapStatus() {
-  const object = objects.find((item) => item.id === selectedId);
-  if (!object) {
-    mapStatus.innerHTML = "";
-    return;
-  }
-  mapStatus.innerHTML = `
-    <strong>${escapeHtml(object.name)}</strong>
-    <span>+${object.game.value} · ${escapeHtml(object.game.kind)} · ${object.distanceFromHome}m away</span>
-    <small>${escapeHtml(object.game.hunt)}</small>
-  `;
-}
-
-function visibleNearbyObjects() {
-  const deck = deckObjects();
-  const visible = deck.slice(0, 28);
-  const selected = objects.find((object) => object.id === selectedId);
-  if (selected && !visible.some((object) => object.id === selected.id)) {
-    return [selected, ...visible.slice(0, 27)];
-  }
-  return visible;
-}
-
-function renderCard(object) {
-  const node = cardTemplate.content.firstElementChild.cloneNode(true);
-  node.classList.toggle("selected", object.id === selectedId);
-  node.querySelector(".family").textContent = object.game.form;
-  node.querySelector(".rarity").textContent = object.game.rarity;
-  node.querySelector(".rarity").style.background = rarityColors[object.game.rarity] || rarityColors.Everyday;
-  node.querySelector(".worth").textContent = `+${object.game.value}`;
-  node.querySelector("h2").textContent = object.name;
-  node.querySelector(".kind").textContent = object.game.kind;
-  node.querySelector(".why").textContent = object.game.why;
-  node.querySelector(".spot").textContent = object.game.spot;
-  node.querySelector(".hunt").textContent = object.game.hunt;
-  node.querySelector(".range").textContent = rangeText(object);
-
-  const traits = node.querySelector(".traits");
-  object.game.badges.slice(0, 5).forEach((trait) => {
-    const chip = document.createElement("span");
-    chip.className = "trait";
-    chip.textContent = trait;
-    traits.appendChild(chip);
-  });
-
-  const collect = node.querySelector(".collect");
-  const isCollected = collected.has(object.id);
-  const collectState = canCollect(object);
-  collect.classList.toggle("done", isCollected);
-  collect.disabled = !isCollected && !collectState.allowed;
-  collect.textContent = isCollected ? "Logged" : collectState.label;
-  collect.title = isCollected ? "Already logged" : collectState.reason;
-  collect.addEventListener("click", () => logFind(object.id));
-  node.querySelector(".focus").addEventListener("click", () => focusObject(object.id));
-  return node;
-}
-
-function deckObjects() {
-  if (activeFilter !== "all") return filteredObjects();
-  const familyOrder = ["canopy", "memory", "street", "culture", "movement"];
-  const buckets = new Map(familyOrder.map((family) => [family, []]));
-  filteredObjects().forEach((object) => buckets.get(object.family)?.push(object));
-  familyOrder.forEach((family) => buckets.set(family, diversifyByKind(buckets.get(family) || [])));
-
-  const mixed = [];
-  let added = true;
-  while (added) {
-    added = false;
-    familyOrder.forEach((family) => {
-      const next = buckets.get(family)?.shift();
-      if (next) {
-        mixed.push(next);
-        added = true;
-      }
+function renderCompass(visibleTargets) {
+  targetLayer.innerHTML = "";
+  signalList.innerHTML = "";
+  const directionSlots = new Map();
+  visibleTargets.forEach((object, index) => {
+    const button = targetTemplate.content.firstElementChild.cloneNode(true);
+    const bearing = bearingTo(object);
+    const relativeBearing = normaliseDegrees(bearing - heading);
+    const radius = staggeredRadius(relativeBearing, object, directionSlots);
+    const point = polarToPercent(relativeBearing, radius);
+    const distanceLabel = `${Math.round(distanceFromUser(object))}m`;
+    button.style.left = `${point.x}%`;
+    button.style.top = `${point.y}%`;
+    button.classList.toggle("selected", object.id === selectedId);
+    button.classList.add(targetClass(object));
+    button.querySelector(".target-arrow").dataset.number = index + 1;
+    button.querySelector(".target-arrow").style.transform = `rotate(${relativeBearing}deg)`;
+    button.querySelector(".target-label").textContent = `${index + 1}`;
+    button.title = `${object.name}, ${distanceLabel}`;
+    button.addEventListener("click", () => {
+      selectedId = object.id;
+      renderAll();
     });
-  }
-  return mixed;
+    targetLayer.appendChild(button);
+
+    const signal = document.createElement("button");
+    signal.className = "signal-button";
+    signal.classList.toggle("selected", object.id === selectedId);
+    signal.type = "button";
+    signal.innerHTML = `
+      <span class="signal-number">${index + 1}</span>
+      <span>
+        <span class="signal-name">${escapeHtml(shortName(object))}</span>
+        <span class="signal-meta">${distanceLabel} · ${cardinalDirection(bearing)} · ${escapeHtml(displayFamily(object))}</span>
+      </span>
+      <span class="signal-value">+${object.game.value}</span>
+    `;
+    signal.addEventListener("click", () => {
+      selectedId = object.id;
+      renderAll();
+    });
+    signalList.appendChild(signal);
+  });
 }
 
-function diversifyByKind(items) {
-  const firstByKind = [];
-  const rest = [];
-  const seen = new Set();
-  items.forEach((item) => {
-    if (seen.has(item.game.kind)) {
-      rest.push(item);
-    } else {
-      seen.add(item.game.kind);
-      firstByKind.push(item);
-    }
+function staggeredRadius(relativeBearing, object, directionSlots) {
+  const bucket = Math.round(relativeBearing / 18);
+  const slot = directionSlots.get(bucket) || 0;
+  directionSlots.set(bucket, slot + 1);
+  if (object.game.value >= 50) return 41;
+  const radii = [22, 30, 36, 16, 44];
+  return radii[slot % radii.length];
+}
+
+function renderFocus(visibleTargets) {
+  const object = visibleTargets.find((item) => item.id === selectedId);
+  if (!object) {
+    focusCard.innerHTML = '<div class="empty-card">No nearby targets in range. Walk a little and the compass will refresh.</div>';
+    return;
+  }
+
+  const collectState = canCollect(object);
+  focusCard.innerHTML = `
+    <div class="card-topline">
+      <span class="family">${escapeHtml(displayFamily(object))}</span>
+      <span class="value">+${object.game.value}</span>
+    </div>
+    <h2>${escapeHtml(object.name)}</h2>
+    <p class="kind">${escapeHtml(object.game.kind)}</p>
+    <p class="distance-line">${Math.round(distanceFromUser(object))}m away · ${cardinalDirection(bearingTo(object))}</p>
+    <p class="reason">${escapeHtml(focusReason(object))}</p>
+    <button id="collectButton" class="collect-button" type="button" ${collectState.allowed ? "" : "disabled"}>${escapeHtml(collectState.label)}</button>
+  `;
+  document.querySelector("#collectButton")?.addEventListener("click", () => collectObject(object.id));
+}
+
+function renderCollected() {
+  const found = objects
+    .filter((object) => collected.has(object.id))
+    .sort((a, b) => (b.collectedAt || 0) - (a.collectedAt || 0) || b.game.value - a.game.value);
+
+  collectedSummary.textContent = found.length
+    ? `${found.length} found · ${found.reduce((sum, object) => sum + object.game.value, 0)} total value`
+    : "Collected items leave the compass and move here.";
+
+  collectedList.innerHTML = "";
+  if (!found.length) {
+    collectedList.innerHTML = '<div class="empty-card">Nothing collected yet.</div>';
+    return;
+  }
+
+  found.forEach((object) => {
+    const card = document.createElement("article");
+    card.className = "item-card";
+    card.innerHTML = `
+      <div class="item-meta">
+        <span>${escapeHtml(displayFamily(object))}</span>
+        <span>+${object.game.value}</span>
+      </div>
+      <h3>${escapeHtml(object.name)}</h3>
+      <p>${escapeHtml(object.game.kind)}</p>
+    `;
+    collectedList.appendChild(card);
   });
-  return [...firstByKind, ...rest];
 }
 
 function renderSets() {
   const sets = new Map();
   objects.forEach((object) => {
-    object.sets.forEach((setName) => {
+    (object.sets || []).forEach((setName) => {
       if (!sets.has(setName)) sets.set(setName, []);
       sets.get(setName).push(object);
     });
   });
 
+  setsList.innerHTML = "";
   [...sets.entries()]
     .sort((a, b) => countCollected(b[1]) - countCollected(a[1]) || bestValue(b[1]) - bestValue(a[1]))
     .forEach(([name, members]) => {
       const found = countCollected(members);
+      const next = members
+        .filter((object) => !collected.has(object.id))
+        .sort((a, b) => distanceFromUser(a) - distanceFromUser(b) || b.game.value - a.game.value)[0];
       const card = document.createElement("article");
       card.className = "set-card";
       card.innerHTML = `
-        <h2>${name}</h2>
-        <p>${setDescription(name, members)}</p>
-        <progress value="${found}" max="${members.length}"></progress>
-        <p>${found}/${members.length} logged · next: ${bestUncollectedName(members)}</p>
+        <h3>${escapeHtml(name)}</h3>
+        <progress class="set-progress" value="${found}" max="${members.length}"></progress>
+        <p>${found}/${members.length} found${next ? ` · next ${escapeHtml(shortName(next))}` : " · complete"}</p>
       `;
-      content.appendChild(card);
+      setsList.appendChild(card);
     });
 }
 
-function countCollected(members) {
-  return members.filter((object) => collected.has(object.id)).length;
+function getVisibleTargets() {
+  const allCandidates = objects
+    .filter((object) => !collected.has(object.id))
+    .map((object) => ({
+      object,
+      distance: distanceFromUser(object),
+      signal: signalRadius(object)
+    }))
+    .sort((a, b) => targetPriority(a) - targetPriority(b));
+
+  let candidates = allCandidates.filter((entry) => entry.distance <= entry.signal);
+  let chosen = enforceHighLowMix(chooseTargets(candidates), allCandidates);
+
+  for (const radius of [75, 150, 300, 600, 1200, 2500]) {
+    if (chosen.length >= MIN_TARGETS) break;
+    candidates = allCandidates.filter((entry) => entry.distance <= Math.max(entry.signal, radius));
+    chosen = enforceHighLowMix(chooseTargets(candidates), allCandidates);
+  }
+
+  if (chosen.length < MIN_TARGETS) {
+    chosen = enforceHighLowMix(chooseTargets(allCandidates), allCandidates);
+  }
+
+  return chosen.sort((a, b) => displayOrder(a) - displayOrder(b));
 }
 
-function bestValue(members) {
-  return Math.max(...members.map((object) => object.game.value));
+function chooseTargets(candidates) {
+  const chosen = [];
+  const seenKinds = new Set();
+  const seenFamilies = new Set();
+
+  for (const entry of candidates) {
+    const kindKey = kindKeyFor(entry.object);
+    if (seenKinds.has(kindKey)) continue;
+    chosen.push(entry.object);
+    seenKinds.add(kindKey);
+    seenFamilies.add(entry.object.family);
+    if (chosen.length >= MAX_TARGETS) break;
+  }
+
+  if (chosen.length < MIN_TARGETS) {
+    for (const entry of candidates) {
+      if (chosen.some((object) => object.id === entry.object.id)) continue;
+      if (seenFamilies.has(entry.object.family) && chosen.length >= MIN_TARGETS - 1) continue;
+      chosen.push(entry.object);
+      seenFamilies.add(entry.object.family);
+      if (chosen.length >= MIN_TARGETS) break;
+    }
+  }
+
+  return chosen;
 }
 
-function bestUncollectedName(members) {
-  const object = members.filter((item) => !collected.has(item.id)).sort((a, b) => proximityBand(a) - proximityBand(b) || homeDistance(a) - homeDistance(b) || b.game.value - a.game.value)[0];
-  return object ? `${object.name} (+${object.game.value})` : "complete";
+function enforceHighLowMix(chosen, candidates) {
+  const targetObjects = [...chosen];
+  const hasHigh = targetObjects.some((object) => isHighValue(object));
+  const hasLow = targetObjects.some((object) => isLowValue(object));
+
+  if (!hasHigh) {
+    const high = candidates
+      .filter((entry) => isHighValue(entry.object))
+      .sort((a, b) => highValuePriority(a) - highValuePriority(b))[0]?.object;
+    addRepresentative(targetObjects, high);
+  }
+
+  if (!hasLow) {
+    const low = candidates
+      .filter((entry) => isLowValue(entry.object))
+      .sort((a, b) => a.distance - b.distance || a.object.game.value - b.object.game.value)[0]?.object;
+    addRepresentative(targetObjects, low);
+  }
+
+  while (targetObjects.length > MAX_TARGETS) {
+    const removableIndex = targetObjects.findIndex((object) => !isHighValue(object) && !isLowValue(object));
+    targetObjects.splice(removableIndex >= 0 ? removableIndex : targetObjects.length - 1, 1);
+  }
+
+  return targetObjects;
 }
 
-function setDescription(name, members) {
-  const kinds = [...new Set(members.map((object) => object.game.kind))].slice(0, 4).join(", ");
-  return `${members.length} items: ${kinds}.`;
+function addRepresentative(targetObjects, object) {
+  if (!object || targetObjects.some((item) => item.id === object.id)) return;
+  const sameKindIndex = targetObjects.findIndex((item) => kindKeyFor(item) === kindKeyFor(object));
+  if (sameKindIndex >= 0) {
+    targetObjects[sameKindIndex] = object;
+  } else {
+    targetObjects.push(object);
+  }
 }
 
-function logFind(id) {
-  if (collected.has(id)) return;
+function isHighValue(object) {
+  return object.game.value >= 30;
+}
+
+function isLowValue(object) {
+  return object.game.value <= 2;
+}
+
+function highValuePriority(entry) {
+  return entry.distance - entry.object.game.value * 1.5;
+}
+
+function targetPriority(entry) {
+  const valueBias = Math.max(0, 120 - entry.object.game.value) * 0.8;
+  const edgePenalty = (entry.distance / entry.signal) * 60;
+  return entry.distance + valueBias + edgePenalty;
+}
+
+function displayOrder(object) {
+  const valueBand = object.game.value >= 50 ? 0 : object.game.value >= 10 ? 1 : 2;
+  return valueBand * 10000 + distanceFromUser(object);
+}
+
+function signalRadius(object) {
+  const value = object.game.value;
+  if (value >= 150) return 250;
+  if (value >= 75) return 180;
+  if (value >= 30) return 120;
+  if (value >= 10) return 75;
+  if (value >= 3) return 45;
+  return 25;
+}
+
+function canCollect(object) {
+  if (collected.has(object.id)) {
+    return { allowed: false, label: "Collected" };
+  }
+  if (locationError) {
+    return { allowed: false, label: locationError.includes("HTTPS") ? "HTTPS needed" : "GPS needed" };
+  }
+  if (!currentPosition) {
+    return { allowed: false, label: "Waiting for GPS" };
+  }
+  if (Date.now() - currentPosition.timestamp > MAX_LOCATION_AGE_MS) {
+    return { allowed: false, label: "Refresh GPS" };
+  }
+  if (currentPosition.accuracy > MAX_LOCATION_ACCURACY_METERS) {
+    return { allowed: false, label: `GPS accuracy ${Math.round(currentPosition.accuracy)}m` };
+  }
+  const meters = distance(currentPosition, object);
+  if (meters > COLLECT_RADIUS_METERS) {
+    return { allowed: false, label: `${Math.round(meters)}m away` };
+  }
+  return { allowed: true, label: `Collect +${object.game.value}` };
+}
+
+function collectObject(id) {
   const object = objects.find((item) => item.id === id);
   if (!object || !canCollect(object).allowed) return;
+  object.collectedAt = Date.now();
   collected.add(id);
   localStorage.setItem(STORAGE_KEY, JSON.stringify([...collected]));
   renderAll();
 }
 
-function focusObject(id) {
-  const object = objects.find((item) => item.id === id);
-  if (!object) return;
-  selectedId = id;
-  map.setView([object.lat, object.lon], Math.max(map.getZoom(), 17), { animate: true });
-  activeView = "nearby";
-  document.querySelectorAll(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.view === activeView));
-  renderAll();
-  requestAnimationFrame(() => {
-    document.querySelector(".card.selected")?.scrollIntoView({ block: "center", behavior: "smooth" });
-  });
-}
-
-function getNextHunt() {
-  const selected = objects.find((object) => object.id === selectedId);
-  const candidates = objects.filter((object) => !collected.has(object.id));
-  if (!selected) return candidates.sort((a, b) => proximityBand(a) - proximityBand(b) || homeDistance(a) - homeDistance(b) || b.game.value - a.game.value)[0];
-  const nearby = candidates.filter((object) => distance(selected, object) <= 650 || homeDistance(object) <= 650);
-  const strongerSameFamily = candidates
-    .filter((object) => nearby.includes(object) && object.family === selected.family && object.game.value > selected.game.value)
-    .sort((a, b) => distance(selected, a) - distance(selected, b) || b.game.value - a.game.value)[0];
-  return strongerSameFamily || nearby.sort((a, b) => homeDistance(a) - homeDistance(b) || b.game.value - a.game.value)[0] || candidates.sort((a, b) => homeDistance(a) - homeDistance(b))[0];
-}
-
-function distance(a, b) {
-  const lat = (a.lat - b.lat) * 111320;
-  const lon = (a.lon - b.lon) * 69400;
-  return Math.sqrt(lat * lat + lon * lon);
+function focusReason(object) {
+  if (collected.has(object.id)) return "Collected.";
+  const collectState = canCollect(object);
+  if (collectState.allowed) return "You are close enough to collect it.";
+  if (!currentPosition && !locationError) return "GPS is not ready yet. You can look around, but collection is locked.";
+  if (locationError) return locationError;
+  const meters = Math.round(distance(currentPosition, object));
+  const signal = signalRadius(object);
+  const visibility = meters > signal
+    ? "The app is looking further because there are not enough closer things."
+    : `It is visible now because its signal range is ${signal}m.`;
+  return `Move within ${COLLECT_RADIUS_METERS}m to collect. ${visibility}`;
 }
 
 function startLocationWatch() {
@@ -410,7 +417,7 @@ function startLocationWatch() {
     return;
   }
   if (!window.isSecureContext) {
-    locationError = "GPS needs HTTPS on iPhone. Local HTTP can show the map but cannot verify finds.";
+    locationError = "GPS needs HTTPS to verify finds.";
     renderAll();
     return;
   }
@@ -423,79 +430,117 @@ function startLocationWatch() {
         timestamp: position.timestamp
       };
       locationError = null;
-      renderUserLocation();
-      renderStats();
-      renderContent();
-      renderMapStatus();
+      renderAll();
     },
     (error) => {
       locationError = error.message || "GPS permission denied.";
-      renderContent();
-      renderMapStatus();
+      renderAll();
     },
     {
       enableHighAccuracy: true,
-      maximumAge: 5000,
+      maximumAge: 3000,
       timeout: 12000
     }
   );
 }
 
-function renderUserLocation() {
-  if (!currentPosition) return;
-  if (userLocationLayer) userLocationLayer.remove();
-  userLocationLayer = L.layerGroup([
-    L.circle([currentPosition.lat, currentPosition.lon], {
-      radius: currentPosition.accuracy,
-      color: "#277981",
-      fillColor: "#277981",
-      fillOpacity: 0.08,
-      weight: 1
-    }),
-    L.circleMarker([currentPosition.lat, currentPosition.lon], {
-      radius: 6,
-      color: "#17211d",
-      fillColor: "#277981",
-      fillOpacity: 1,
-      weight: 2
-    })
-  ]).addTo(map);
+async function requestHeading() {
+  try {
+    if (typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function") {
+      const permission = await DeviceOrientationEvent.requestPermission();
+      if (permission !== "granted") return;
+    }
+    window.addEventListener("deviceorientation", handleOrientation, true);
+    headingEnabled = true;
+    renderAll();
+  } catch {
+    headingEnabled = false;
+    renderAll();
+  }
 }
 
-function canCollect(object) {
-  if (collected.has(object.id)) {
-    return { allowed: false, label: "Logged", reason: "Already logged" };
+function handleOrientation(event) {
+  const webkitHeading = event.webkitCompassHeading;
+  if (typeof webkitHeading === "number") {
+    heading = webkitHeading;
+  } else if (typeof event.alpha === "number") {
+    heading = 360 - event.alpha;
   }
-  if (locationError) {
-    const label = locationError.includes("HTTPS") ? "HTTPS needed" : "GPS needed";
-    return { allowed: false, label, reason: locationError };
-  }
-  if (!currentPosition) {
-    return { allowed: false, label: "Finding GPS", reason: "Waiting for current location." };
-  }
-  if (Date.now() - currentPosition.timestamp > MAX_LOCATION_AGE_MS) {
-    return { allowed: false, label: "GPS stale", reason: "Move outside or refresh location." };
-  }
-  if (currentPosition.accuracy > MAX_LOCATION_ACCURACY_METERS) {
-    return { allowed: false, label: "Weak GPS", reason: `GPS accuracy is ${Math.round(currentPosition.accuracy)}m; needs ${MAX_LOCATION_ACCURACY_METERS}m or better.` };
-  }
-  const metersAway = distance(currentPosition, object);
-  if (metersAway > GEOFENCE_METERS) {
-    return { allowed: false, label: `${Math.round(metersAway)}m away`, reason: `Move within ${GEOFENCE_METERS}m to log this item.` };
-  }
-  return { allowed: true, label: `Log +${object.game.value}`, reason: `Within ${Math.round(metersAway)}m.` };
+  renderCompass(getVisibleTargets());
+  renderLocationStatus();
 }
 
-function rangeText(object) {
-  if (collected.has(object.id)) return "Logged.";
-  if (locationError) return locationError;
-  if (!currentPosition) return `Move within ${GEOFENCE_METERS}m to log. Waiting for GPS.`;
-  const metersAway = Math.round(distance(currentPosition, object));
-  const accuracy = Math.round(currentPosition.accuracy);
-  if (currentPosition.accuracy > MAX_LOCATION_ACCURACY_METERS) {
-    return `GPS accuracy ${accuracy}m. Need ${MAX_LOCATION_ACCURACY_METERS}m or better to log.`;
-  }
-  return `${metersAway}m from you. Log when within ${GEOFENCE_METERS}m.`;
+function distanceFromUser(object) {
+  const origin = currentPosition || HOME;
+  return distance(origin, object);
+}
+
+function distance(a, b) {
+  const lat = (a.lat - b.lat) * 111320;
+  const lon = (a.lon - b.lon) * 69400;
+  return Math.sqrt(lat * lat + lon * lon);
+}
+
+function bearingTo(object) {
+  const origin = currentPosition || HOME;
+  const lat1 = toRadians(origin.lat);
+  const lat2 = toRadians(object.lat);
+  const deltaLon = toRadians(object.lon - origin.lon);
+  const y = Math.sin(deltaLon) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(deltaLon);
+  return normaliseDegrees(toDegrees(Math.atan2(y, x)));
+}
+
+function polarToPercent(degrees, radius) {
+  const radians = toRadians(degrees);
+  return {
+    x: 50 + Math.sin(radians) * radius,
+    y: 50 - Math.cos(radians) * radius
+  };
+}
+
+function cardinalDirection(degrees) {
+  const directions = ["north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west"];
+  return directions[Math.round(normaliseDegrees(degrees) / 45) % 8];
+}
+
+function targetClass(object) {
+  if (object.game.value >= 50) return "prize";
+  if (object.game.value >= 10) return "good";
+  return "everyday";
+}
+
+function displayFamily(object) {
+  return FAMILY_LABELS[object.family] || object.game.form || "Object";
+}
+
+function shortName(object) {
+  const named = object.name && !/^Tree #/.test(object.name) ? object.name : object.game.kind;
+  return named.length > 18 ? `${named.slice(0, 17)}...` : named;
+}
+
+function kindKeyFor(object) {
+  return `${object.family}:${object.game.kind}`.toLowerCase();
+}
+
+function countCollected(members) {
+  return members.filter((object) => collected.has(object.id)).length;
+}
+
+function bestValue(members) {
+  return Math.max(...members.map((object) => object.game.value));
+}
+
+function toRadians(value) {
+  return value * Math.PI / 180;
+}
+
+function toDegrees(value) {
+  return value * 180 / Math.PI;
+}
+
+function normaliseDegrees(value) {
+  return (value % 360 + 360) % 360;
 }
 
 function escapeHtml(value) {
@@ -504,22 +549,4 @@ function escapeHtml(value) {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;");
-}
-
-function refreshMapSize() {
-  [0, 80, 220, 500].forEach((delay) => {
-    setTimeout(() => map.invalidateSize(), delay);
-  });
-}
-
-function homeDistance(object) {
-  return object.distanceFromHome || distance({ lat: HOME_CENTRE[0], lon: HOME_CENTRE[1] }, object);
-}
-
-function proximityBand(object) {
-  const d = homeDistance(object);
-  if (d <= 250) return 0;
-  if (d <= 500) return 1;
-  if (d <= 800) return 2;
-  return 3;
 }
