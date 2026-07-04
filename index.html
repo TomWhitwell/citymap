@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SE24 Field Cards</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIINfQnNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="map-wrap" aria-label="SE24 collectible map">
+        <div id="map"></div>
+        <div id="mapStatus" class="map-status" aria-live="polite"></div>
+        <div class="map-tools">
+          <button id="locateButton" type="button">Home</button>
+          <button id="questButton" type="button">Next better find</button>
+          <button id="mapModeButton" type="button">Map</button>
+        </div>
+      </section>
+
+      <aside class="panel">
+        <header class="masthead">
+          <p class="eyebrow">Prototype field guide</p>
+          <h1>SE24 Field Cards</h1>
+          <p class="lede">A field guide game for real things nearby: trees, crossings, postboxes, libraries, murals, bus stops and other mapped places.</p>
+        </header>
+
+        <section class="scoreboard" aria-label="Collection progress">
+          <div>
+            <strong id="collectedCount">0</strong>
+            <span>found</span>
+          </div>
+          <div>
+            <strong id="collectionKinds">0</strong>
+            <span>kinds</span>
+          </div>
+          <div>
+            <strong id="collectionValue">0</strong>
+            <span>value</span>
+          </div>
+        </section>
+
+        <nav class="tabs" aria-label="Views">
+          <button class="tab active" data-view="nearby" type="button">Nearby</button>
+          <button class="tab" data-view="sets" type="button">Sets</button>
+          <button class="tab" data-view="collection" type="button">Collection</button>
+        </nav>
+
+        <section class="filters" aria-label="Object filters">
+          <button class="chip active" data-filter="all" type="button">All</button>
+          <button class="chip" data-filter="canopy" type="button">Canopy</button>
+          <button class="chip" data-filter="memory" type="button">Memory</button>
+          <button class="chip" data-filter="street" type="button">Street</button>
+          <button class="chip" data-filter="culture" type="button">Culture</button>
+          <button class="chip" data-filter="movement" type="button">Movement</button>
+        </section>
+
+        <section id="content" class="content" aria-live="polite"></section>
+      </aside>
+    </main>
+
+    <template id="cardTemplate">
+      <article class="card">
+        <div class="card-topline">
+          <span class="family"></span>
+          <span class="rarity"></span>
+          <span class="worth"></span>
+        </div>
+        <h2></h2>
+        <p class="kind"></p>
+        <dl class="field-notes">
+          <div>
+            <dt>Why points</dt>
+            <dd class="why"></dd>
+          </div>
+          <div>
+            <dt>Find it</dt>
+            <dd class="spot"></dd>
+          </div>
+        </dl>
+        <div class="traits"></div>
+        <p class="hunt"></p>
+        <p class="range"></p>
+        <div class="card-actions">
+          <button class="collect" type="button"></button>
+          <button class="focus" type="button">Show</button>
+        </div>
+      </article>
+    </template>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script src="app.js"></script>
+  </body>
+</html>
