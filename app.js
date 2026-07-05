@@ -80,6 +80,8 @@ const signalList = document.querySelector("#signalList");
 const focusCard = document.querySelector("#focusCard");
 const collectedSummary = document.querySelector("#collectedSummary");
 const collectedList = document.querySelector("#collectedList");
+const collectionMap = document.querySelector("#collectionMap");
+const collectionMapScale = document.querySelector("#collectionMapScale");
 const setsList = document.querySelector("#setsList");
 const headingButton = document.querySelector("#headingButton");
 const signalRange = document.querySelector("#signalRange");
@@ -106,6 +108,7 @@ document.querySelectorAll(".tab").forEach((button) => {
     document.querySelectorAll(".tab").forEach((tab) => tab.classList.toggle("active", tab === button));
     document.querySelectorAll(".view").forEach((view) => view.classList.toggle("active", view.id === `${activeView}View`));
     document.querySelector("h1").textContent = button.textContent;
+    headingButton.hidden = activeView !== "nearby";
     renderAll();
   });
 });
@@ -115,6 +118,10 @@ signalRange.addEventListener("input", () => {
   signalModeIndex = Number(signalRange.value);
   localStorage.setItem("se24-signal-mode", String(signalModeIndex));
   renderAll();
+});
+
+window.addEventListener("resize", () => {
+  if (activeView === "collected") renderCollected();
 });
 
 function normaliseGameObject(object) {
@@ -250,9 +257,10 @@ function renderCollected() {
     ? `${found.length} found · ${found.reduce((sum, object) => sum + object.game.value, 0)} total value`
     : "Collected items leave the compass and move here.";
 
+  drawCollectionMap(found);
   collectedList.innerHTML = "";
   if (!found.length) {
-    collectedList.innerHTML = '<div class="empty-card">Nothing collected yet.</div>';
+    collectedList.innerHTML = '<div class="empty-card">Nothing collected yet. Finds will appear as heat on the map.</div>';
     return;
   }
 
@@ -262,13 +270,151 @@ function renderCollected() {
     card.innerHTML = `
       <div class="item-meta">
         <span>${escapeHtml(displayFamily(object))}</span>
-        <span>+${object.game.value}</span>
+        <span>${Math.round(distanceFromUser(object))}m</span>
       </div>
       <h3>${escapeHtml(object.name)}</h3>
       <p>${escapeHtml(object.game.kind)}</p>
+      <strong class="row-value">+${object.game.value}</strong>
     `;
     collectedList.appendChild(card);
   });
+}
+
+function drawCollectionMap(found) {
+  const canvas = collectionMap;
+  const cssWidth = Math.max(1, Math.round(canvas.clientWidth));
+  const cssHeight = Math.max(1, Math.round(canvas.clientHeight));
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(cssWidth * dpr);
+  canvas.height = Math.round(cssHeight * dpr);
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssWidth, cssHeight);
+
+  const mapped = found.length ? found : [];
+  const bounds = mapBounds(mapped.length ? mapped : objects);
+  const project = (object) => projectPoint(object, bounds, cssWidth, cssHeight);
+
+  drawMapGround(ctx, cssWidth, cssHeight);
+  drawContextObjects(ctx, project, found);
+  if (found.length) {
+    drawCollectedHeat(ctx, project, found);
+    collectionMapScale.textContent = mapScaleText(bounds, found.length);
+  } else {
+    drawEmptyMapHint(ctx, cssWidth, cssHeight);
+    collectionMapScale.textContent = "No finds yet";
+  }
+}
+
+function drawMapGround(ctx, width, height) {
+  ctx.fillStyle = "#f3eee3";
+  ctx.fillRect(0, 0, width, height);
+  ctx.strokeStyle = "rgba(23, 23, 19, 0.06)";
+  ctx.lineWidth = 1;
+  for (let x = 24; x < width; x += 42) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x + 18, height);
+    ctx.stroke();
+  }
+  for (let y = 28; y < height; y += 46) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(width, y - 14);
+    ctx.stroke();
+  }
+}
+
+function drawContextObjects(ctx, project, found) {
+  const foundIds = new Set(found.map((object) => object.id));
+  ctx.fillStyle = "rgba(23, 23, 19, 0.075)";
+  objects.forEach((object) => {
+    if (foundIds.has(object.id)) return;
+    const point = project(object);
+    ctx.fillRect(point.x, point.y, 1, 1);
+  });
+}
+
+function drawCollectedHeat(ctx, project, found) {
+  found.forEach((object) => {
+    const point = project(object);
+    const radius = Math.max(10, Math.min(28, 8 + Math.log2(object.game.value + 1) * 4));
+    const glow = ctx.createRadialGradient(point.x, point.y, 0, point.x, point.y, radius);
+    glow.addColorStop(0, heatColor(object, 0.34));
+    glow.addColorStop(0.45, heatColor(object, 0.12));
+    glow.addColorStop(1, heatColor(object, 0));
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  found.forEach((object) => {
+    const point = project(object);
+    const size = Math.max(1, Math.min(5, Math.ceil(Math.log2(object.game.value + 1))));
+    ctx.fillStyle = heatColor(object, 0.95);
+    ctx.fillRect(Math.round(point.x) - Math.floor(size / 2), Math.round(point.y) - Math.floor(size / 2), size, size);
+  });
+}
+
+function drawEmptyMapHint(ctx, width, height) {
+  ctx.fillStyle = "rgba(23, 23, 19, 0.35)";
+  ctx.font = "700 12px system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("collected finds will draw this map", width / 2, height / 2);
+}
+
+function heatColor(object, alpha) {
+  if (object.family === "canopy") return `rgba(68, 110, 88, ${alpha})`;
+  if (object.family === "memory") return `rgba(141, 77, 54, ${alpha})`;
+  if (object.family === "movement") return `rgba(45, 111, 120, ${alpha})`;
+  if (object.family === "culture") return `rgba(154, 107, 35, ${alpha})`;
+  return `rgba(23, 23, 19, ${alpha})`;
+}
+
+function mapBounds(items) {
+  const points = items.length ? items : [HOME];
+  let minLat = Infinity;
+  let maxLat = -Infinity;
+  let minLon = Infinity;
+  let maxLon = -Infinity;
+  points.forEach((object) => {
+    minLat = Math.min(minLat, object.lat);
+    maxLat = Math.max(maxLat, object.lat);
+    minLon = Math.min(minLon, object.lon);
+    maxLon = Math.max(maxLon, object.lon);
+  });
+
+  const minLatSpan = 0.0032;
+  const minLonSpan = 0.0048;
+  const latMid = (minLat + maxLat) / 2;
+  const lonMid = (minLon + maxLon) / 2;
+  const latSpan = Math.max(maxLat - minLat, minLatSpan);
+  const lonSpan = Math.max(maxLon - minLon, minLonSpan);
+  return {
+    minLat: latMid - latSpan * 0.58,
+    maxLat: latMid + latSpan * 0.58,
+    minLon: lonMid - lonSpan * 0.58,
+    maxLon: lonMid + lonSpan * 0.58
+  };
+}
+
+function projectPoint(object, bounds, width, height) {
+  const pad = 14;
+  const x = pad + (object.lon - bounds.minLon) / (bounds.maxLon - bounds.minLon) * (width - pad * 2);
+  const y = pad + (bounds.maxLat - object.lat) / (bounds.maxLat - bounds.minLat) * (height - pad * 2);
+  return {
+    x: clamp(x, 1, width - 2),
+    y: clamp(y, 1, height - 2)
+  };
+}
+
+function mapScaleText(bounds, count) {
+  const northWest = { lat: bounds.maxLat, lon: bounds.minLon };
+  const southEast = { lat: bounds.minLat, lon: bounds.maxLon };
+  const diagonal = Math.round(distance(northWest, southEast));
+  if (diagonal >= 1000) return `${count} finds · ${(diagonal / 1000).toFixed(1)}km view`;
+  return `${count} finds · ${diagonal}m view`;
 }
 
 function renderSets() {
