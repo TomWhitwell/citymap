@@ -40,9 +40,17 @@
           <div id="compass" class="compass" aria-label="Directions to nearby objects">
             <div class="ring outer"></div>
             <div class="ring inner"></div>
+            <div class="ring horizon"></div>
             <div class="north">N</div>
             <div class="you"></div>
             <div id="targetLayer"></div>
+          </div>
+          <div class="signal-control">
+            <label for="signalRange">
+              <span>Signal</span>
+              <strong id="signalMode">Everyday</strong>
+            </label>
+            <input id="signalRange" type="range" min="0" max="3" step="1" value="0">
           </div>
           <div id="signalList" class="signal-list" aria-label="Visible signals"></div>
         </div>
@@ -74,9 +82,9 @@
     </main>
 
     <template id="targetTemplate">
-      <button class="target-dot" type="button">
-        <span class="target-arrow"></span>
-        <span class="target-label"></span>
+      <button class="field-object" type="button">
+        <span class="field-symbol"></span>
+        <span class="field-value"></span>
       </button>
     </template>
 

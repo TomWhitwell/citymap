@@ -3,8 +3,17 @@ const STORAGE_KEY = "se24-field-cards-v4";
 const COLLECT_RADIUS_METERS = 5;
 const MAX_LOCATION_ACCURACY_METERS = 35;
 const MAX_LOCATION_AGE_MS = 120000;
-const MAX_TARGETS = 5;
+const MAX_TARGETS = 3;
 const MIN_TARGETS = 3;
+const FIELD_MAX_DISTANCE_METERS = 2500;
+const MAX_FIELD_OBJECTS = 220;
+
+const SIGNAL_MODES = [
+  { name: "Everyday", threshold: 0.42 },
+  { name: "Notable", threshold: 0.78 },
+  { name: "Rare", threshold: 1.35 },
+  { name: "Mythic", threshold: 2.25 }
+];
 
 const FAMILY_LABELS = {
   canopy: "Tree",
@@ -12,6 +21,30 @@ const FAMILY_LABELS = {
   street: "Street",
   culture: "Place",
   movement: "Transport"
+};
+
+const TYPE_SYMBOLS = [
+  { match: "tree", symbol: "♣" },
+  { match: "postbox", symbol: "✉" },
+  { match: "library", symbol: "▣" },
+  { match: "art", symbol: "✦" },
+  { match: "sculpture", symbol: "✦" },
+  { match: "mural", symbol: "✦" },
+  { match: "memorial", symbol: "✚" },
+  { match: "plaque", symbol: "✚" },
+  { match: "crossing", symbol: "⇄" },
+  { match: "bus", symbol: "⬢" },
+  { match: "station", symbol: "⬢" },
+  { match: "cafe", symbol: "◉" },
+  { match: "place", symbol: "▣" }
+];
+
+const FAMILY_SYMBOLS = {
+  canopy: "♣",
+  memory: "✚",
+  street: "●",
+  culture: "▣",
+  movement: "⬢"
 };
 
 let objects = [];
@@ -22,6 +55,7 @@ let currentPosition = null;
 let locationError = null;
 let heading = 0;
 let headingEnabled = false;
+let signalModeIndex = Math.min(3, Math.max(0, Number(localStorage.getItem("se24-signal-mode") || "0")));
 
 const targetCount = document.querySelector("#targetCount");
 const collectedCount = document.querySelector("#collectedCount");
@@ -35,13 +69,17 @@ const collectedSummary = document.querySelector("#collectedSummary");
 const collectedList = document.querySelector("#collectedList");
 const setsList = document.querySelector("#setsList");
 const headingButton = document.querySelector("#headingButton");
+const signalRange = document.querySelector("#signalRange");
+const signalMode = document.querySelector("#signalMode");
 const targetTemplate = document.querySelector("#targetTemplate");
+
+signalRange.value = String(signalModeIndex);
 
 fetch("data/se24-objects.json")
   .then((response) => response.json())
   .then((payload) => {
     objects = payload.objects.map(normaliseGameObject);
-    selectedId = getVisibleTargets()[0]?.id || null;
+    selectedId = getStrongSignals(getFieldObjects())[0]?.object.id || null;
     renderAll();
     startLocationWatch();
   })
@@ -60,6 +98,11 @@ document.querySelectorAll(".tab").forEach((button) => {
 });
 
 headingButton.addEventListener("click", requestHeading);
+signalRange.addEventListener("input", () => {
+  signalModeIndex = Number(signalRange.value);
+  localStorage.setItem("se24-signal-mode", String(signalModeIndex));
+  renderAll();
+});
 
 function normaliseGameObject(object) {
   const game = object.game || {};
@@ -77,21 +120,22 @@ function normaliseGameObject(object) {
 }
 
 function renderAll() {
-  const visibleTargets = getVisibleTargets();
-  if (!selectedId || !visibleTargets.some((object) => object.id === selectedId)) {
-    selectedId = visibleTargets[0]?.id || null;
+  const fieldObjects = getFieldObjects();
+  const strongSignals = getStrongSignals(fieldObjects);
+  if (!selectedId || collected.has(selectedId)) {
+    selectedId = strongSignals[0]?.object.id || fieldObjects[0]?.object.id || null;
   }
-  renderStats(visibleTargets);
+  renderStats(fieldObjects, strongSignals);
   renderLocationStatus();
-  renderCompass(visibleTargets);
-  renderFocus(visibleTargets);
+  renderCompass(fieldObjects, strongSignals);
+  renderFocus(fieldObjects, strongSignals);
   renderCollected();
   renderSets();
 }
 
-function renderStats(visibleTargets) {
+function renderStats(fieldObjects, strongSignals) {
   const found = objects.filter((object) => collected.has(object.id));
-  targetCount.textContent = visibleTargets.length;
+  targetCount.textContent = strongSignals.length || fieldObjects.filter((entry) => entry.opacity >= 0.12).length;
   collectedCount.textContent = found.length;
   collectionValue.textContent = found.reduce((sum, object) => sum + object.game.value, 0).toLocaleString();
 }
@@ -105,42 +149,48 @@ function renderLocationStatus() {
     locationStatus.textContent = `GPS ${Math.round(currentPosition.accuracy)}m`;
   }
   headingStatus.textContent = headingEnabled ? "Live compass" : "North-up";
+  signalMode.textContent = SIGNAL_MODES[signalModeIndex].name;
 }
 
-function renderCompass(visibleTargets) {
+function renderCompass(fieldObjects, strongSignals) {
   targetLayer.innerHTML = "";
   signalList.innerHTML = "";
-  const directionSlots = new Map();
-  visibleTargets.forEach((object, index) => {
+  fieldObjects.forEach((entry) => {
+    const { object, opacity, size, distance, bearing, relativeBearing, radius, signal } = entry;
     const button = targetTemplate.content.firstElementChild.cloneNode(true);
-    const bearing = bearingTo(object);
-    const relativeBearing = normaliseDegrees(bearing - heading);
-    const radius = staggeredRadius(relativeBearing, object, directionSlots);
     const point = polarToPercent(relativeBearing, radius);
-    const distanceLabel = `${Math.round(distanceFromUser(object))}m`;
     button.style.left = `${point.x}%`;
     button.style.top = `${point.y}%`;
+    button.style.width = `${size}px`;
+    button.style.height = `${size}px`;
+    button.style.setProperty("--symbol-size", `${Math.max(15, Math.round(size * 0.72))}px`);
+    button.style.opacity = opacity.toFixed(3);
+    button.style.zIndex = String(Math.round(signal * 100));
     button.classList.toggle("selected", object.id === selectedId);
     button.classList.add(targetClass(object));
-    button.querySelector(".target-arrow").dataset.number = index + 1;
-    button.querySelector(".target-arrow").style.transform = `rotate(${relativeBearing}deg)`;
-    button.querySelector(".target-label").textContent = `${index + 1}`;
-    button.title = `${object.name}, ${distanceLabel}`;
+    button.classList.add(object.family || "street");
+    button.classList.toggle("too-quiet", opacity < 0.1);
+    button.querySelector(".field-symbol").textContent = objectSymbol(object);
+    button.querySelector(".field-value").textContent = compactValue(object.game.value);
+    button.title = `${object.name}, ${Math.round(distance)}m, +${object.game.value}`;
     button.addEventListener("click", () => {
       selectedId = object.id;
       renderAll();
     });
     targetLayer.appendChild(button);
+  });
 
+  strongSignals.forEach((entry, index) => {
+    const { object, distance, bearing } = entry;
     const signal = document.createElement("button");
     signal.className = "signal-button";
     signal.classList.toggle("selected", object.id === selectedId);
     signal.type = "button";
     signal.innerHTML = `
-      <span class="signal-number">${index + 1}</span>
+      <span class="signal-number">${objectSymbol(object)}</span>
       <span>
         <span class="signal-name">${escapeHtml(shortName(object))}</span>
-        <span class="signal-meta">${distanceLabel} · ${cardinalDirection(bearing)} · ${escapeHtml(displayFamily(object))}</span>
+        <span class="signal-meta">${Math.round(distance)}m · ${cardinalDirection(bearing)} · ${escapeHtml(displayFamily(object))}</span>
       </span>
       <span class="signal-value">+${object.game.value}</span>
     `;
@@ -152,23 +202,18 @@ function renderCompass(visibleTargets) {
   });
 }
 
-function staggeredRadius(relativeBearing, object, directionSlots) {
-  const bucket = Math.round(relativeBearing / 18);
-  const slot = directionSlots.get(bucket) || 0;
-  directionSlots.set(bucket, slot + 1);
-  if (object.game.value >= 50) return 41;
-  const radii = [22, 30, 36, 16, 44];
-  return radii[slot % radii.length];
-}
-
-function renderFocus(visibleTargets) {
-  const object = visibleTargets.find((item) => item.id === selectedId);
+function renderFocus(fieldObjects, strongSignals) {
+  const object = objects.find((item) => item.id === selectedId && !collected.has(item.id));
   if (!object) {
-    focusCard.innerHTML = '<div class="empty-card">No nearby targets in range. Walk a little and the compass will refresh.</div>';
+    focusCard.innerHTML = '<div class="empty-card">No visible signals. Lower the Signal control or walk a little.</div>';
     return;
   }
 
   const collectState = canCollect(object);
+  const entry = fieldObjects.find((item) => item.object.id === object.id);
+  const signalText = entry
+    ? `${SIGNAL_MODES[signalModeIndex].name} signal · ${Math.round(entry.distance)}m away`
+    : `${Math.round(distanceFromUser(object))}m away`;
   focusCard.innerHTML = `
     <div class="card-topline">
       <span class="family">${escapeHtml(displayFamily(object))}</span>
@@ -176,7 +221,7 @@ function renderFocus(visibleTargets) {
     </div>
     <h2>${escapeHtml(object.name)}</h2>
     <p class="kind">${escapeHtml(object.game.kind)}</p>
-    <p class="distance-line">${Math.round(distanceFromUser(object))}m away · ${cardinalDirection(bearingTo(object))}</p>
+    <p class="distance-line">${signalText} · ${cardinalDirection(bearingTo(object))}</p>
     <p class="reason">${escapeHtml(focusReason(object))}</p>
     <button id="collectButton" class="collect-button" type="button" ${collectState.allowed ? "" : "disabled"}>${escapeHtml(collectState.label)}</button>
   `;
@@ -241,33 +286,52 @@ function renderSets() {
     });
 }
 
-function getVisibleTargets() {
-  const allCandidates = objects
+function getFieldObjects() {
+  const threshold = SIGNAL_MODES[signalModeIndex].threshold;
+  const entries = objects
     .filter((object) => !collected.has(object.id))
-    .map((object) => ({
-      object,
-      distance: distanceFromUser(object),
-      signal: signalRadius(object)
-    }))
-    .sort((a, b) => targetPriority(a) - targetPriority(b));
+    .map((object) => {
+      const distance = distanceFromUser(object);
+      const bearing = bearingTo(object);
+      const relativeBearing = normaliseDegrees(bearing - heading);
+      const signal = signalStrength(object, distance);
+      const opacity = signalOpacity(object, signal, threshold);
+      return {
+        object,
+        distance,
+        bearing,
+        relativeBearing,
+        signal,
+        opacity,
+        radius: distanceRadius(distance),
+        size: symbolSize(object, signal)
+      };
+    })
+    .filter((entry) => entry.opacity > 0.018)
+    .sort((a, b) => a.signal - b.signal);
 
-  let candidates = allCandidates.filter((entry) => entry.distance <= entry.signal);
-  let chosen = enforceHighLowMix(chooseTargets(candidates), allCandidates);
-
-  for (const radius of [75, 150, 300, 600, 1200, 2500]) {
-    if (chosen.length >= MIN_TARGETS) break;
-    candidates = allCandidates.filter((entry) => entry.distance <= Math.max(entry.signal, radius));
-    chosen = enforceHighLowMix(chooseTargets(candidates), allCandidates);
-  }
-
-  if (chosen.length < MIN_TARGETS) {
-    chosen = enforceHighLowMix(chooseTargets(allCandidates), allCandidates);
-  }
-
-  return chosen.sort((a, b) => displayOrder(a) - displayOrder(b));
+  return entries.slice(-MAX_FIELD_OBJECTS);
 }
 
-function chooseTargets(candidates) {
+function getStrongSignals(fieldObjects) {
+  const byStrength = [...fieldObjects]
+    .filter((entry) => entry.opacity >= 0.1)
+    .sort((a, b) => b.signal - a.signal || a.distance - b.distance);
+
+  let chosen = chooseSignalEntries(byStrength);
+  chosen = enforceHighLowSignalMix(chosen, byStrength);
+
+  if (chosen.length < MIN_TARGETS) {
+    const wider = [...fieldObjects].sort((a, b) => b.signal - a.signal || a.distance - b.distance);
+    chosen = enforceHighLowSignalMix(chooseSignalEntries(wider), wider);
+  }
+
+  return chosen
+    .slice(0, MAX_TARGETS)
+    .sort((a, b) => b.signal - a.signal || a.distance - b.distance);
+}
+
+function chooseSignalEntries(candidates) {
   const chosen = [];
   const seenKinds = new Set();
   const seenFamilies = new Set();
@@ -275,7 +339,7 @@ function chooseTargets(candidates) {
   for (const entry of candidates) {
     const kindKey = kindKeyFor(entry.object);
     if (seenKinds.has(kindKey)) continue;
-    chosen.push(entry.object);
+    chosen.push(entry);
     seenKinds.add(kindKey);
     seenFamilies.add(entry.object.family);
     if (chosen.length >= MAX_TARGETS) break;
@@ -283,9 +347,9 @@ function chooseTargets(candidates) {
 
   if (chosen.length < MIN_TARGETS) {
     for (const entry of candidates) {
-      if (chosen.some((object) => object.id === entry.object.id)) continue;
+      if (chosen.some((item) => item.object.id === entry.object.id)) continue;
       if (seenFamilies.has(entry.object.family) && chosen.length >= MIN_TARGETS - 1) continue;
-      chosen.push(entry.object);
+      chosen.push(entry);
       seenFamilies.add(entry.object.family);
       if (chosen.length >= MIN_TARGETS) break;
     }
@@ -294,40 +358,40 @@ function chooseTargets(candidates) {
   return chosen;
 }
 
-function enforceHighLowMix(chosen, candidates) {
-  const targetObjects = [...chosen];
-  const hasHigh = targetObjects.some((object) => isHighValue(object));
-  const hasLow = targetObjects.some((object) => isLowValue(object));
+function enforceHighLowSignalMix(chosen, candidates) {
+  const targetEntries = [...chosen];
+  const hasHigh = targetEntries.some((entry) => isHighValue(entry.object));
+  const hasLow = targetEntries.some((entry) => isLowValue(entry.object));
 
   if (!hasHigh) {
     const high = candidates
       .filter((entry) => isHighValue(entry.object))
-      .sort((a, b) => highValuePriority(a) - highValuePriority(b))[0]?.object;
-    addRepresentative(targetObjects, high);
+      .sort((a, b) => b.signal - a.signal || b.object.game.value - a.object.game.value)[0];
+    addSignalRepresentative(targetEntries, high);
   }
 
   if (!hasLow) {
     const low = candidates
       .filter((entry) => isLowValue(entry.object))
-      .sort((a, b) => a.distance - b.distance || a.object.game.value - b.object.game.value)[0]?.object;
-    addRepresentative(targetObjects, low);
+      .sort((a, b) => a.distance - b.distance || b.signal - a.signal)[0];
+    addSignalRepresentative(targetEntries, low);
   }
 
-  while (targetObjects.length > MAX_TARGETS) {
-    const removableIndex = targetObjects.findIndex((object) => !isHighValue(object) && !isLowValue(object));
-    targetObjects.splice(removableIndex >= 0 ? removableIndex : targetObjects.length - 1, 1);
+  while (targetEntries.length > MAX_TARGETS) {
+    const removableIndex = targetEntries.findIndex((entry) => !isHighValue(entry.object) && !isLowValue(entry.object));
+    targetEntries.splice(removableIndex >= 0 ? removableIndex : targetEntries.length - 1, 1);
   }
 
-  return targetObjects;
+  return targetEntries;
 }
 
-function addRepresentative(targetObjects, object) {
-  if (!object || targetObjects.some((item) => item.id === object.id)) return;
-  const sameKindIndex = targetObjects.findIndex((item) => kindKeyFor(item) === kindKeyFor(object));
+function addSignalRepresentative(targetEntries, entry) {
+  if (!entry || targetEntries.some((item) => item.object.id === entry.object.id)) return;
+  const sameKindIndex = targetEntries.findIndex((item) => kindKeyFor(item.object) === kindKeyFor(entry.object));
   if (sameKindIndex >= 0) {
-    targetObjects[sameKindIndex] = object;
+    targetEntries[sameKindIndex] = entry;
   } else {
-    targetObjects.push(object);
+    targetEntries.push(entry);
   }
 }
 
@@ -339,29 +403,41 @@ function isLowValue(object) {
   return object.game.value <= 2;
 }
 
-function highValuePriority(entry) {
-  return entry.distance - entry.object.game.value * 1.5;
+function signalStrength(object, meters) {
+  const valueSignal = Math.log2(object.game.value + 1);
+  return valueSignal * 18 / Math.pow(meters + 20, 0.75);
 }
 
-function targetPriority(entry) {
-  const valueBias = Math.max(0, 120 - entry.object.game.value) * 0.8;
-  const edgePenalty = (entry.distance / entry.signal) * 60;
-  return entry.distance + valueBias + edgePenalty;
+function signalOpacity(object, signal, threshold) {
+  if (signal >= threshold) {
+    return clamp(0.16 + (signal - threshold) / (threshold * 2.4), 0.16, 0.96);
+  }
+  const highValueGhost = object.game.value >= 100 && signal >= threshold * 0.24;
+  const closeLowGhost = object.game.value <= 2 && distanceFromUser(object) <= 35 && signal >= threshold * 0.5;
+  if (highValueGhost || closeLowGhost) return clamp(signal / threshold * 0.12, 0.035, 0.13);
+  return 0.012;
 }
 
-function displayOrder(object) {
-  const valueBand = object.game.value >= 50 ? 0 : object.game.value >= 10 ? 1 : 2;
-  return valueBand * 10000 + distanceFromUser(object);
+function distanceRadius(meters) {
+  const capped = Math.min(meters, FIELD_MAX_DISTANCE_METERS);
+  return 7 + 42 * Math.log(capped + 1) / Math.log(FIELD_MAX_DISTANCE_METERS + 1);
 }
 
-function signalRadius(object) {
-  const value = object.game.value;
-  if (value >= 150) return 250;
-  if (value >= 75) return 180;
-  if (value >= 30) return 120;
-  if (value >= 10) return 75;
-  if (value >= 3) return 45;
-  return 25;
+function symbolSize(object, signal) {
+  const valueBoost = Math.min(12, Math.log2(object.game.value + 1) * 1.5);
+  const signalBoost = Math.min(8, signal * 2);
+  return Math.round(20 + valueBoost + signalBoost);
+}
+
+function objectSymbol(object) {
+  const haystack = `${object.type || ""} ${object.typeLabel || ""} ${object.game.kind || ""} ${object.name || ""}`.toLowerCase();
+  const match = TYPE_SYMBOLS.find((entry) => haystack.includes(entry.match));
+  return match?.symbol || FAMILY_SYMBOLS[object.family] || "●";
+}
+
+function compactValue(value) {
+  if (value >= 1000) return `${Math.round(value / 100) / 10}k`;
+  return String(value);
 }
 
 function canCollect(object) {
@@ -403,11 +479,7 @@ function focusReason(object) {
   if (!currentPosition && !locationError) return "GPS is not ready yet. You can look around, but collection is locked.";
   if (locationError) return locationError;
   const meters = Math.round(distance(currentPosition, object));
-  const signal = signalRadius(object);
-  const visibility = meters > signal
-    ? "The app is looking further because there are not enough closer things."
-    : `It is visible now because its signal range is ${signal}m.`;
-  return `Move within ${COLLECT_RADIUS_METERS}m to collect. ${visibility}`;
+  return `Move within ${COLLECT_RADIUS_METERS}m to collect. Its signal is based on value and distance.`;
 }
 
 function startLocationWatch() {
@@ -466,7 +538,8 @@ function handleOrientation(event) {
   } else if (typeof event.alpha === "number") {
     heading = 360 - event.alpha;
   }
-  renderCompass(getVisibleTargets());
+  const fieldObjects = getFieldObjects();
+  renderCompass(fieldObjects, getStrongSignals(fieldObjects));
   renderLocationStatus();
 }
 
@@ -541,6 +614,10 @@ function toDegrees(value) {
 
 function normaliseDegrees(value) {
   return (value % 360 + 360) % 360;
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
 }
 
 function escapeHtml(value) {
