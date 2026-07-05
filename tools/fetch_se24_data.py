@@ -10,8 +10,11 @@ from pathlib import Path
 
 # Centered on SE24 0AQ postcode centroid from postcodes.io:
 # latitude 51.460834, longitude -0.097488.
+# The query box is a little wider than the active field; the final dataset is
+# clipped to a one-mile radius so the game stays local but dense.
 BBOX = (51.444, -0.124, 51.478, -0.071)
 HOME = {"lat": 51.460834, "lon": -0.097488}
+ACTIVE_RADIUS_METERS = 1609
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 OUT = Path("data/se24-objects.json")
 
@@ -24,22 +27,41 @@ FAMILIES = {
     "memory": {
         "label": "History and art",
         "sets": ["History and art"],
-        "types": {"memorial", "artwork", "place_of_worship"},
+        "types": {"memorial", "artwork", "place_of_worship", "information"},
     },
     "street": {
         "label": "Street objects",
         "sets": ["Street objects"],
-        "types": {"post_box", "bench", "waste_basket", "bicycle_parking", "telephone", "defibrillator", "toilets"},
+        "types": {
+            "post_box",
+            "bench",
+            "waste_basket",
+            "bicycle_parking",
+            "telephone",
+            "defibrillator",
+            "toilets",
+            "drinking_water",
+            "recycling",
+            "public_bookcase",
+            "parcel_locker",
+            "clock",
+            "fountain",
+            "fire_hydrant",
+            "street_lamp",
+            "street_cabinet",
+            "gate",
+            "bollard",
+        },
     },
     "culture": {
         "label": "Places",
         "sets": ["Places"],
-        "types": {"pub", "cafe", "restaurant", "fast_food", "library", "theatre", "gallery", "arts_centre", "community_centre"},
+        "types": {"pub", "cafe", "restaurant", "fast_food", "library", "theatre", "gallery", "arts_centre", "community_centre", "playground"},
     },
     "movement": {
         "label": "Transport",
         "sets": ["Transport"],
-        "types": {"bus_stop", "crossing", "traffic_signals"},
+        "types": {"bus_stop", "crossing", "traffic_signals", "elevator"},
     },
 }
 
@@ -57,9 +79,21 @@ TYPE_LABELS = {
     "telephone": "telephone box",
     "defibrillator": "defibrillator",
     "toilets": "public toilet",
+    "drinking_water": "drinking water",
+    "recycling": "recycling point",
+    "public_bookcase": "public bookcase",
+    "parcel_locker": "parcel locker",
+    "clock": "public clock",
+    "fountain": "fountain",
+    "fire_hydrant": "fire hydrant",
+    "street_lamp": "street lamp",
+    "street_cabinet": "street cabinet",
+    "gate": "gate",
+    "bollard": "bollard",
     "memorial": "memorial",
     "artwork": "artwork",
     "place_of_worship": "place of worship",
+    "information": "information board",
     "pub": "pub",
     "cafe": "cafe",
     "restaurant": "restaurant",
@@ -69,9 +103,11 @@ TYPE_LABELS = {
     "gallery": "gallery",
     "arts_centre": "arts centre",
     "community_centre": "community centre",
+    "playground": "playground",
     "bus_stop": "bus stop",
     "crossing": "crossing",
     "traffic_signals": "traffic signals",
+    "elevator": "lift",
 }
 
 
@@ -79,12 +115,17 @@ def build_query():
     south, west, north, east = BBOX
     tags = [
         'node["natural"="tree"]',
-        'node["amenity"~"post_box|bench|waste_basket|bicycle_parking|telephone|defibrillator|toilets|pub|cafe|restaurant|fast_food|library|theatre|arts_centre|community_centre"]',
-        'node["tourism"~"artwork|gallery"]',
+        'node["amenity"~"post_box|bench|waste_basket|bicycle_parking|telephone|defibrillator|toilets|drinking_water|recycling|public_bookcase|parcel_locker|clock|fountain|pub|cafe|restaurant|fast_food|library|theatre|arts_centre|community_centre"]',
+        'node["emergency"~"defibrillator|fire_hydrant"]',
+        'node["highway"~"bus_stop|crossing|traffic_signals|street_lamp|elevator"]',
+        'node["barrier"~"gate|bollard"]',
+        'node["man_made"~"street_cabinet"]',
+        'node["leisure"~"playground"]',
+        'node["tourism"~"artwork|gallery|information"]',
         'node["historic"~"memorial"]',
-        'node["highway"~"bus_stop|crossing|traffic_signals"]',
-        'way["amenity"~"pub|cafe|restaurant|fast_food|library|theatre|arts_centre|community_centre"]',
-        'way["tourism"~"artwork|gallery"]',
+        'way["amenity"~"pub|cafe|restaurant|fast_food|library|theatre|arts_centre|community_centre|recycling|fountain"]',
+        'way["leisure"~"playground"]',
+        'way["tourism"~"artwork|gallery|information"]',
         'way["historic"~"memorial"]',
         'way["building"="church"]',
     ]
@@ -105,16 +146,32 @@ def detect_type(tags):
         return "tree"
     if tags.get("historic") == "memorial":
         return "memorial"
-    if tags.get("tourism") in {"artwork", "gallery"}:
-        return "artwork" if tags.get("tourism") == "artwork" else "gallery"
+    if tags.get("tourism") in {"artwork", "gallery", "information"}:
+        if tags.get("tourism") == "artwork":
+            return "artwork"
+        if tags.get("tourism") == "information":
+            return "information"
+        return "gallery"
     if tags.get("building") == "church":
         return "place_of_worship"
     amenity = tags.get("amenity")
     if amenity in TYPE_TO_FAMILY:
         return amenity
+    emergency = tags.get("emergency")
+    if emergency in TYPE_TO_FAMILY:
+        return emergency
     highway = tags.get("highway")
     if highway in TYPE_TO_FAMILY:
         return highway
+    barrier = tags.get("barrier")
+    if barrier in TYPE_TO_FAMILY:
+        return barrier
+    man_made = tags.get("man_made")
+    if man_made in TYPE_TO_FAMILY:
+        return man_made
+    leisure = tags.get("leisure")
+    if leisure in TYPE_TO_FAMILY:
+        return leisure
     return None
 
 
@@ -168,7 +225,7 @@ def normalise(raw):
         if key in seen:
             continue
         seen.add(key)
-        records.append(
+        record = (
             {
                 "sourceId": f"osm-{element['type']}-{element['id']}",
                 "lat": lat,
@@ -182,6 +239,8 @@ def normalise(raw):
                 "source": "OpenStreetMap via Overpass API",
             }
         )
+        if meters(record, HOME) <= ACTIVE_RADIUS_METERS:
+            records.append(record)
     return records
 
 
@@ -268,7 +327,7 @@ def enrich(records):
 
 def prelimit(records):
     limits = {
-        "tree": 220,
+        "tree": 260,
         "crossing": 120,
         "traffic_signals": 80,
         "bus_stop": 90,
@@ -276,6 +335,15 @@ def prelimit(records):
         "bicycle_parking": 80,
         "post_box": 80,
         "waste_basket": 80,
+        "street_lamp": 260,
+        "bollard": 180,
+        "gate": 140,
+        "street_cabinet": 120,
+        "fire_hydrant": 120,
+        "recycling": 90,
+        "drinking_water": 80,
+        "playground": 80,
+        "information": 80,
     }
     by_type = defaultdict(list)
     for item in records:
@@ -323,6 +391,8 @@ def field_value(item, isolation, nearest_same, neighbours, cross, type_count, sp
             return 80
         if tags.get("wikipedia") or tags.get("wikidata"):
             return 70
+        if item["type"] == "information":
+            return 10 if tags.get("name") or tags.get("information") else 6
         if tags.get("name"):
             return 35
         return 12
@@ -332,6 +402,8 @@ def field_value(item, isolation, nearest_same, neighbours, cross, type_count, sp
             return 100
         if item["type"] in {"theatre", "arts_centre", "gallery"}:
             return 70
+        if item["type"] == "playground":
+            return 8 if tags.get("name") else 5
         if tags.get("wikipedia") or tags.get("wikidata"):
             return 45
         if item["type"] in {"pub", "community_centre"}:
@@ -343,6 +415,30 @@ def field_value(item, isolation, nearest_same, neighbours, cross, type_count, sp
     if item["family"] == "street":
         if item["type"] == "toilets":
             return 20
+        if item["type"] == "drinking_water":
+            return 12
+        if item["type"] == "public_bookcase":
+            return 18
+        if item["type"] == "recycling":
+            return 4
+        if item["type"] == "parcel_locker":
+            return 6
+        if item["type"] == "clock":
+            return 15
+        if item["type"] == "fountain":
+            return 20
+        if item["type"] == "fire_hydrant":
+            return 3
+        if item["type"] == "street_cabinet":
+            return 2
+        if item["type"] == "gate":
+            return 2
+        if item["type"] == "bollard":
+            return 1
+        if item["type"] == "street_lamp":
+            if tags.get("lamp_type") or tags.get("design"):
+                return 3
+            return 1
         if item["type"] == "post_box" and tags.get("ref"):
             return 5
         if item["type"] == "telephone":
@@ -361,6 +457,8 @@ def field_value(item, isolation, nearest_same, neighbours, cross, type_count, sp
             return 3
         if item["type"] == "traffic_signals":
             return 2
+        if item["type"] == "elevator":
+            return 8
         return 1
 
     return 1
@@ -447,10 +545,16 @@ def kind_for(item):
     if item["family"] == "memory":
         if item["type"] == "artwork" and tags.get("artwork_type"):
             return tags["artwork_type"]
+        if item["type"] == "information" and tags.get("information"):
+            return f"{clean_value(tags['information'])} information"
         if item["type"] == "place_of_worship":
             return "place of worship"
         return item["typeLabel"]
     if item["family"] == "street":
+        if item["type"] == "street_lamp" and tags.get("lamp_type"):
+            return f"{clean_value(tags['lamp_type'])} street lamp"
+        if item["type"] == "recycling" and tags.get("recycling_type"):
+            return f"{clean_value(tags['recycling_type'])} recycling point"
         if item["type"] == "bicycle_parking" and tags.get("bicycle_parking") == "shed":
             return "bikehangar"
         if item["type"] == "post_box" and tags.get("ref"):
@@ -524,6 +628,8 @@ def why_line(item, isolation, nearest_same, neighbours, cross, type_count, speci
             return "It is in a cluster of mapped trees."
         return "This is an ordinary mapped tree."
     if item["family"] == "memory":
+        if item["type"] == "information" and tags.get("information"):
+            return f"It is mapped as {clean_value(tags['information'])} information."
         if tags.get("artist_name") and tags.get("start_date"):
             return f"It has both an artist and date: {tags['artist_name']} / {tags['start_date']}."
         if tags.get("artist_name"):
@@ -536,6 +642,24 @@ def why_line(item, isolation, nearest_same, neighbours, cross, type_count, speci
     if item["family"] == "street":
         if item["type"] == "toilets":
             return "Public toilets are uncommon and useful."
+        if item["type"] == "drinking_water":
+            return "A public drinking-water point is useful and fairly uncommon."
+        if item["type"] == "public_bookcase":
+            return "Public bookcases are small shared civic objects."
+        if item["type"] == "recycling":
+            return "A mapped recycling point adds useful street detail."
+        if item["type"] == "parcel_locker":
+            return "Parcel lockers are everyday logistics infrastructure."
+        if item["type"] == "clock":
+            return "Public clocks are uncommon street furniture."
+        if item["type"] == "fountain":
+            return "Fountains are uncommon public objects."
+        if item["type"] == "fire_hydrant":
+            return "Fire hydrants are useful hidden infrastructure."
+        if item["type"] == "street_lamp":
+            return "Street lamps are common, but useful for making streets playable."
+        if item["type"] in {"gate", "bollard", "street_cabinet"}:
+            return f"This is mapped as {article(item['typeLabel'])} {item['typeLabel']}."
         if item["type"] == "post_box" and tags.get("ref"):
             return f"It has a postbox reference: {tags['ref']}."
         if item["type"] == "bicycle_parking" and tags.get("capacity"):
@@ -548,6 +672,8 @@ def why_line(item, isolation, nearest_same, neighbours, cross, type_count, speci
     if item["family"] == "culture":
         if item["type"] == "library":
             return "Libraries are high value because they are public, useful and uncommon."
+        if item["type"] == "playground":
+            return "Playgrounds are public local places and make neighbourhood walks more varied."
         if tags.get("wikipedia") or tags.get("wikidata"):
             return "It has a public reference link."
         if tags.get("cuisine"):
@@ -635,10 +761,20 @@ def trim(records):
     for item in records:
         by_family[item["family"]].append(item)
     selected = []
-    limits = {"canopy": 55, "memory": 35, "street": 65, "culture": 55, "movement": 55}
+    limits = {"canopy": 220, "memory": 150, "street": 360, "culture": 180, "movement": 170}
     for family, items in by_family.items():
-        items.sort(key=lambda item: (item["distanceFromHome"], -item["game"]["value"], item["sourceId"]))
-        selected.extend(items[: limits.get(family, 40)])
+        by_type = defaultdict(list)
+        for item in items:
+            by_type[item["type"]].append(item)
+        for type_items in by_type.values():
+            type_items.sort(key=lambda item: (0 if item["tags"].get("name") else 1, item["distanceFromHome"], -item["game"]["value"], item["sourceId"]))
+        family_selected = []
+        type_names = sorted(by_type, key=lambda type_name: (-len(by_type[type_name]), type_name))
+        while len(family_selected) < limits.get(family, 120) and any(by_type.values()):
+            for type_name in type_names:
+                if by_type[type_name] and len(family_selected) < limits.get(family, 120):
+                    family_selected.append(by_type[type_name].pop(0))
+        selected.extend(family_selected)
     return sorted(selected, key=lambda item: (item["distanceFromHome"], -item["game"]["value"], item["sourceId"]))
 
 
@@ -656,6 +792,7 @@ def main():
                 "generatedBy": "tools/fetch_se24_data.py",
                 "source": "OpenStreetMap via Overpass API",
                 "bbox": BBOX,
+                "activeRadiusMeters": ACTIVE_RADIUS_METERS,
                 "objectCount": len(records),
                 "objects": records,
             },

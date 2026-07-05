@@ -1,17 +1,20 @@
 :root {
-  --ink: #17211d;
-  --muted: #64706b;
-  --paper: #f4efe3;
-  --panel: #fffaf0;
-  --panel-2: #fffdf8;
-  --line: #d8cfbf;
-  --green: #34785f;
-  --teal: #277981;
-  --rust: #9c4d30;
-  --gold: #b57924;
-  --violet: #6b5d8d;
-  --disabled: #d5d1c8;
-  --shadow: 0 16px 44px rgba(28, 27, 22, 0.16);
+  --ink: #171713;
+  --muted: #69675f;
+  --paper: #eee9dd;
+  --panel: #f8f2e6;
+  --panel-2: #fbf7ed;
+  --line: #c8bfae;
+  --accent: #232f2f;
+  --signal: #2d6f78;
+  --canopy: #446e58;
+  --memory: #8d4d36;
+  --street: #555b58;
+  --culture: #9a6b23;
+  --movement: #2d6f78;
+  --violet: #635a79;
+  --disabled: #d0cbc1;
+  --shadow: 0 12px 28px rgba(23, 23, 19, 0.1);
 }
 
 * {
@@ -26,7 +29,7 @@ body {
 body {
   margin: 0;
   color: var(--ink);
-  background: #dfe7df;
+  background: #d8d4ca;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
@@ -44,7 +47,7 @@ button {
   flex-direction: column;
   overflow: hidden;
   background:
-    radial-gradient(circle at 50% 28%, rgba(52, 120, 95, 0.13), transparent 42%),
+    radial-gradient(circle at 50% 28%, rgba(45, 111, 120, 0.1), transparent 42%),
     var(--paper);
   box-shadow: 0 0 0 1px rgba(23, 33, 29, 0.08);
 }
@@ -59,7 +62,7 @@ button {
 
 .eyebrow {
   margin: 0 0 2px;
-  color: var(--rust);
+  color: var(--memory);
   font-size: 0.72rem;
   font-weight: 900;
   letter-spacing: 0.08em;
@@ -83,8 +86,8 @@ h1 {
 .tab,
 .collect-button {
   border: 1px solid var(--line);
-  border-radius: 8px;
-  background: rgba(255, 250, 240, 0.92);
+  border-radius: 3px;
+  background: rgba(248, 242, 230, 0.88);
   cursor: pointer;
 }
 
@@ -98,15 +101,20 @@ h1 {
 .stats {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-  padding: 6px 18px 10px;
+  gap: 0;
+  padding: 6px 18px 12px;
 }
 
 .stats div {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 8px 10px;
-  background: rgba(255, 253, 248, 0.84);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 8px 0;
+  background: transparent;
+}
+
+.stats div + div {
+  padding-left: 12px;
+  border-left: 1px solid var(--line);
 }
 
 .stats strong,
@@ -142,12 +150,12 @@ h1 {
 
 .compass-panel {
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 3px;
   background:
-    radial-gradient(circle at 50% 50%, rgba(23, 33, 29, 0.1), transparent 4%),
-    radial-gradient(circle at 50% 52%, rgba(39, 121, 129, 0.12), transparent 42%),
-    rgba(255, 250, 240, 0.78);
-  box-shadow: var(--shadow);
+    radial-gradient(circle at 50% 50%, rgba(23, 23, 19, 0.1), transparent 4%),
+    radial-gradient(circle at 50% 52%, rgba(45, 111, 120, 0.1), transparent 42%),
+    linear-gradient(180deg, rgba(251, 247, 237, 0.86), rgba(238, 233, 221, 0.72));
+  box-shadow: none;
 }
 
 .compass-status {
@@ -171,7 +179,7 @@ h1 {
 .ring {
   position: absolute;
   inset: 9%;
-  border: 1px solid rgba(23, 33, 29, 0.22);
+  border: 1px solid rgba(23, 23, 19, 0.18);
   border-radius: 50%;
 }
 
@@ -192,7 +200,7 @@ h1 {
   left: 50%;
   width: 28px;
   margin-left: -14px;
-  color: var(--rust);
+  color: var(--memory);
   font-size: 0.82rem;
   font-weight: 900;
   text-align: center;
@@ -207,7 +215,7 @@ h1 {
   border: 3px solid var(--panel);
   border-radius: 50%;
   background: var(--ink);
-  box-shadow: 0 0 0 1px rgba(23, 33, 29, 0.25), 0 8px 18px rgba(23, 33, 29, 0.22);
+  box-shadow: 0 0 0 1px rgba(23, 23, 19, 0.26), 0 0 18px rgba(45, 111, 120, 0.18);
   transform: translate(-50%, -50%);
 }
 
@@ -264,15 +272,15 @@ h1 {
 
 .field-object.selected {
   z-index: 400 !important;
-  filter: drop-shadow(0 0 10px rgba(181, 121, 36, 0.55));
+  filter: drop-shadow(0 0 10px rgba(154, 107, 35, 0.48));
   opacity: 1 !important;
 }
 
 .field-object.selected .field-symbol {
-  color: var(--rust);
+  color: var(--culture);
   text-shadow:
     0 1px 0 #fff4cb,
-    0 0 14px rgba(181, 121, 36, 0.75);
+    0 0 14px rgba(154, 107, 35, 0.7);
 }
 
 .field-object.prize .field-symbol {
@@ -280,7 +288,7 @@ h1 {
 }
 
 .field-object.good .field-symbol {
-  color: var(--teal);
+  color: var(--signal);
 }
 
 .field-object.everyday .field-symbol {
@@ -288,23 +296,23 @@ h1 {
 }
 
 .field-object.canopy .field-symbol {
-  color: var(--green);
+  color: var(--canopy);
 }
 
 .field-object.memory .field-symbol {
-  color: var(--rust);
+  color: var(--memory);
 }
 
 .field-object.street .field-symbol {
-  color: #59625d;
+  color: var(--street);
 }
 
 .field-object.culture .field-symbol {
-  color: var(--gold);
+  color: var(--culture);
 }
 
 .field-object.movement .field-symbol {
-  color: var(--teal);
+  color: var(--movement);
 }
 
 .field-object.too-quiet {
@@ -335,7 +343,7 @@ h1 {
 
 .signal-control input {
   width: 100%;
-  accent-color: var(--green);
+  accent-color: var(--accent);
 }
 
 .signal-list {
@@ -352,14 +360,14 @@ h1 {
   width: 100%;
   min-height: 40px;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  background: rgba(255, 253, 248, 0.76);
+  border-radius: 3px;
+  background: rgba(251, 247, 237, 0.68);
   text-align: left;
 }
 
 .signal-button.selected {
-  border-color: var(--gold);
-  background: #fff8df;
+  border-color: var(--accent);
+  background: rgba(255, 250, 235, 0.88);
 }
 
 .signal-number {
@@ -405,7 +413,7 @@ h1 {
 .empty-card {
   margin-top: 12px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 3px;
   background: var(--panel-2);
   padding: 14px;
 }
@@ -423,7 +431,7 @@ h1 {
 
 .family,
 .value {
-  border-radius: 999px;
+  border-radius: 2px;
   padding: 4px 8px;
   font-size: 0.72rem;
   font-weight: 900;
@@ -432,14 +440,15 @@ h1 {
 }
 
 .family {
-  background: #edf5ee;
-  color: #235a45;
+  background: transparent;
+  color: var(--muted);
+  padding-left: 0;
 }
 
 .value {
   margin-left: auto;
   background: var(--ink);
-  color: white;
+  color: var(--panel);
 }
 
 .focus-card h2,
@@ -483,8 +492,8 @@ h1 {
   min-height: 48px;
   margin-top: 14px;
   border-color: transparent;
-  background: var(--green);
-  color: white;
+  background: var(--accent);
+  color: var(--panel);
   font-weight: 900;
 }
 
@@ -545,7 +554,7 @@ h1 {
   width: 100%;
   height: 12px;
   margin: 10px 0 4px;
-  accent-color: var(--green);
+  accent-color: var(--accent);
 }
 
 .tabbar {
@@ -561,7 +570,7 @@ h1 {
   margin: 0 auto;
   padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--line);
-  background: rgba(255, 250, 240, 0.96);
+  background: rgba(248, 242, 230, 0.96);
   backdrop-filter: blur(16px);
 }
 
@@ -571,9 +580,9 @@ h1 {
 }
 
 .tab.active {
-  border-color: var(--green);
-  background: var(--green);
-  color: white;
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--panel);
 }
 
 @media (min-width: 780px) {
@@ -583,11 +592,11 @@ h1 {
 
   .app-shell {
     min-height: calc(100dvh - 48px);
-    border-radius: 18px;
+    border-radius: 6px;
   }
 
   .tabbar {
-    border-radius: 0 0 18px 18px;
+    border-radius: 0 0 6px 6px;
   }
 }
 

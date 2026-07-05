@@ -5,8 +5,8 @@ const MAX_LOCATION_ACCURACY_METERS = 35;
 const MAX_LOCATION_AGE_MS = 120000;
 const MAX_TARGETS = 3;
 const MIN_TARGETS = 3;
-const FIELD_MAX_DISTANCE_METERS = 2500;
-const MAX_FIELD_OBJECTS = 220;
+const FIELD_MAX_DISTANCE_METERS = 1609;
+const MAX_FIELD_OBJECTS = 420;
 
 const SIGNAL_MODES = [
   { name: "Everyday", threshold: 0.42 },
@@ -26,6 +26,19 @@ const FAMILY_LABELS = {
 const TYPE_SYMBOLS = [
   { match: "tree", symbol: "♣" },
   { match: "postbox", symbol: "✉" },
+  { match: "drinking water", symbol: "⌁" },
+  { match: "recycling", symbol: "♻" },
+  { match: "bookcase", symbol: "▤" },
+  { match: "parcel locker", symbol: "▦" },
+  { match: "clock", symbol: "◷" },
+  { match: "fountain", symbol: "≋" },
+  { match: "hydrant", symbol: "✚" },
+  { match: "street lamp", symbol: "✶" },
+  { match: "cabinet", symbol: "▫" },
+  { match: "gate", symbol: "⌒" },
+  { match: "bollard", symbol: "•" },
+  { match: "playground", symbol: "⚬" },
+  { match: "information", symbol: "ⓘ" },
   { match: "library", symbol: "▣" },
   { match: "art", symbol: "✦" },
   { match: "sculpture", symbol: "✦" },
@@ -314,15 +327,18 @@ function getFieldObjects() {
 }
 
 function getStrongSignals(fieldObjects) {
+  const minimumValue = minimumValueForMode();
   const byStrength = [...fieldObjects]
-    .filter((entry) => entry.opacity >= 0.1)
+    .filter((entry) => entry.opacity >= 0.1 && entry.object.game.value >= minimumValue)
     .sort((a, b) => b.signal - a.signal || a.distance - b.distance);
 
   let chosen = chooseSignalEntries(byStrength);
   chosen = enforceHighLowSignalMix(chosen, byStrength);
 
   if (chosen.length < MIN_TARGETS) {
-    const wider = [...fieldObjects].sort((a, b) => b.signal - a.signal || a.distance - b.distance);
+    const wider = [...fieldObjects]
+      .filter((entry) => entry.object.game.value >= minimumValue)
+      .sort((a, b) => b.signal - a.signal || a.distance - b.distance);
     chosen = enforceHighLowSignalMix(chooseSignalEntries(wider), wider);
   }
 
@@ -361,6 +377,7 @@ function chooseSignalEntries(candidates) {
 function enforceHighLowSignalMix(chosen, candidates) {
   const targetEntries = [...chosen];
   const hasHigh = targetEntries.some((entry) => isHighValue(entry.object));
+  const shouldKeepLowAnchor = signalModeIndex === 0;
   const hasLow = targetEntries.some((entry) => isLowValue(entry.object));
 
   if (!hasHigh) {
@@ -370,7 +387,7 @@ function enforceHighLowSignalMix(chosen, candidates) {
     addSignalRepresentative(targetEntries, high);
   }
 
-  if (!hasLow) {
+  if (shouldKeepLowAnchor && !hasLow) {
     const low = candidates
       .filter((entry) => isLowValue(entry.object))
       .sort((a, b) => a.distance - b.distance || b.signal - a.signal)[0];
@@ -409,6 +426,9 @@ function signalStrength(object, meters) {
 }
 
 function signalOpacity(object, signal, threshold) {
+  if (object.game.value < minimumValueForMode() && distanceFromUser(object) > COLLECT_RADIUS_METERS) {
+    return 0.012;
+  }
   if (signal >= threshold) {
     return clamp(0.16 + (signal - threshold) / (threshold * 2.4), 0.16, 0.96);
   }
@@ -416,6 +436,10 @@ function signalOpacity(object, signal, threshold) {
   const closeLowGhost = object.game.value <= 2 && distanceFromUser(object) <= 35 && signal >= threshold * 0.5;
   if (highValueGhost || closeLowGhost) return clamp(signal / threshold * 0.12, 0.035, 0.13);
   return 0.012;
+}
+
+function minimumValueForMode() {
+  return [0, 3, 10, 25][signalModeIndex] || 0;
 }
 
 function distanceRadius(meters) {
